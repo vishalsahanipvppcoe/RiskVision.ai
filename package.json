@@ -1,0 +1,18 @@
+{
+  "name": "riskvision-ai",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm --prefix RiskVision-frontend run dev",
+    "build": "npm --prefix RiskVision-frontend run build",
+    "lint": "npm --prefix RiskVision-frontend run lint",
+    "preview": "npm --prefix RiskVision-frontend run preview",
+    "start:frontend": "npm --prefix RiskVision-frontend run dev",
+    "start:backend": "python Backend/riskvision.py",
+    "start:all": "concurrently \"npm run start:backend\" \"npm run start:frontend\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

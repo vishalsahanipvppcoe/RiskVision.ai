@@ -1,0 +1,40 @@
+# Backend-specific ignore rules
+.env
+.env.*
+!.env.example
+
+# Service account credentials & keys
+*firebase-adminsdk*.json
+*service-account*.json
+firebase-credentials.json
+eyeview-v2-firebase-adminsdk-fbsvc-a1600b8e74.json
+
+# Local user records, alerts and tokens
+users.json
+alert_log*.json
+*twilio_2FA_recovery_code*.txt
+
+# Virtual environment & caches
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+runs/
+
+# Unused weights & templates
+last.pt
+yolo11n.pt
+templates/
+riskvision-MSI.py
+args.yaml
+results.csv
+
+# Generated media
+static/history_clips/*
+!static/history_clips/.gitkeep
+temp_frames_*
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
