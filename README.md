@@ -512,7 +512,7 @@ The project supports two authentication patterns for the Firebase Admin SDK:
 | `PORT` | Listening port for the Flask backend. | No | `5000` |
 | `JWT_SECRET_KEY` | Secret key used to sign and verify JWT tokens. | **Yes** | *None (Refuses prod startup if missing)* |
 | `JWT_ACCESS_TOKEN_EXPIRES_HOURS` | Lifetime of user authentication access tokens in hours. | No | `24` |
-| `CORS_ORIGINS` | Comma-separated list of permitted frontend origins. | No | `http://localhost:5173,http://localhost:3000` |
+| `CORS_ORIGINS` | Comma-separated list of permitted frontend origins. | No | `http://localhost:5173,http://localhost:3000,https://risk-vision-ai-rho.vercel.app` |
 | `FIREBASE_CREDENTIALS_PATH` | Path to Firebase Admin SDK service account key file. | Optional | `riskvision-ai-firebase-adminsdk.json` |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Stringified JSON of Firebase Admin SDK service key. | Optional | *None* |
 | `FIREBASE_DATABASE_URL` | Full URL to the Firebase Realtime Database instance. | Optional | `https://<project>-default-rtdb.firebaseio.com/` |
@@ -528,7 +528,7 @@ The project supports two authentication patterns for the Firebase Admin SDK:
 
 | Variable | Description | Required | Default / Example |
 | :--- | :--- | :---: | :--- |
-| `VITE_API_URL` | Base URL of the RiskVision Flask backend API. | **Yes** | `http://localhost:5000` |
+| `VITE_API_URL` | Base URL of the RiskVision Flask backend API (local server or secure host tunnel). | **Yes (Prod)** | `http://localhost:5000` (Dev default) |
 
 ---
 
@@ -538,6 +538,7 @@ All API endpoints are hosted by the Flask server and consumed by the React opera
 
 | Method | Endpoint | Protection | Description |
 | :--- | :--- | :---: | :--- |
+| `GET` | `/health` | Public | Health check returning service status, camera readiness, model status, and timestamp. |
 | `POST` | `/auth/register` | Public | Registers a new user account with first name, last name, email, and password. |
 | `POST` | `/auth/login` | Public | Authenticates credentials and returns a JWT `access_token` and user profile. |
 | `GET` | `/auth/profile` | JWT Required | Returns current user profile details and activity counters. |
@@ -548,6 +549,35 @@ All API endpoints are hosted by the Flask server and consumed by the React opera
 | `GET` | `/history_clips` | Public | Lists all saved video clips with timestamps and thumbnail links. |
 | `GET` | `/history_clips/<path>` | Public | Streams a specific H.264 MP4 video clip with HTTP range-request support. |
 | `GET` | `/thumbnails/<path>` | Public | Serves an extracted JPEG thumbnail image for a recorded incident clip. |
+
+---
+
+## Production Deployment & Remote Host Connectivity
+
+### Hybrid Architecture: Vercel Frontend + Windows Local Detection Host
+In RiskVision.ai, live physical surveillance requires access to physical camera hardware (USB webcam or local CCTV capture card) and GPU/CPU acceleration for continuous YOLO neural inference. Cloud serverless environments (like Vercel functions) cannot access a local USB camera attached to your Windows PC.
+
+To connect your deployed Vercel frontend (`https://risk-vision-ai-rho.vercel.app`) to your local Windows detection PC securely without exposing port 5000 or opening router ports:
+
+1. **Start the Local Detection Backend**:
+   ```powershell
+   cd D:\RiskVision\Backend
+   .\venv\Scripts\python.exe riskvision.py
+   ```
+2. **Establish a Secure Outbound HTTPS Tunnel**:
+   Using an encrypted outbound tunnel such as [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) (or ngrok):
+   ```powershell
+   # Quick Cloudflare Tunnel (no account required):
+   cloudflared.exe tunnel --url http://localhost:5000
+   ```
+   This generates a secure public HTTPS endpoint, e.g. `https://<tunnel-id>.trycloudflare.com`.
+3. **Configure Vercel Environment Variables**:
+   - Open your Vercel Project Dashboard for `risk-vision-ai`.
+   - Go to **Settings** > **Environment Variables**.
+   - Set `VITE_API_URL` to your tunnel URL (e.g. `https://<tunnel-id>.trycloudflare.com`).
+   - Trigger a Redeploy under **Deployments** (since Vite bundles environment variables at build time).
+4. **Offline Resilience**:
+   When your Windows host PC is powered off or disconnected, the Vercel frontend automatically displays a clear "Host Offline / Standby" banner and graceful retry states instead of crashing or showing deceptive "All Clear" messages.
 
 ---
 

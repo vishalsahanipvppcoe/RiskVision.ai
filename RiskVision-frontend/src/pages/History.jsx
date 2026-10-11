@@ -69,30 +69,34 @@ const WarningIcon = ({ className }) => (
 const HistorySection = () => {
   const [historyClips, setHistoryClips] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [videoErrors, setVideoErrors] = useState(new Set());
 
+  const fetchHistoryClips = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get(API_ENDPOINTS.historyClips);
+      const clipsData = response.data || [];
+
+      // Prepend configured API base URL to create full playable URLs
+      const clipsWithUrls = clipsData.map((clip) => ({
+        ...clip,
+        videoUrl: API_ENDPOINTS.resolveMediaUrl(clip.url),
+        thumbnailUrl: API_ENDPOINTS.resolveMediaUrl(clip.thumbnail_url),
+      }));
+
+      setHistoryClips(clipsWithUrls);
+      setError(null);
+    } catch (err) {
+      console.error("Failed to fetch clips: ", err);
+      setHistoryClips([]);
+      setError("Unable to connect to RiskVision detection host. Ensure the backend server is active and connected.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchHistoryClips = async () => {
-      try {
-        const response = await axios.get(API_ENDPOINTS.historyClips);
-        const clipsData = response.data || [];
-
-        // Prepend configured API base URL to create full playable URLs
-        const clipsWithUrls = clipsData.map((clip) => ({
-          ...clip,
-          videoUrl: API_ENDPOINTS.resolveMediaUrl(clip.url),
-          thumbnailUrl: API_ENDPOINTS.resolveMediaUrl(clip.thumbnail_url),
-        }));
-
-        setHistoryClips(clipsWithUrls);
-      } catch (err) {
-        console.error("Failed to fetch clips: ", err);
-        setHistoryClips([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchHistoryClips();
   }, []);
 
@@ -119,6 +123,28 @@ const HistorySection = () => {
           >
             <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
             <p className="text-gray-400 text-lg">Loading video history...</p>
+          </motion.div>
+        ) : error ? (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="text-center py-20 bg-gray-800/40 rounded-2xl border border-yellow-500/30 max-w-xl mx-auto p-8"
+          >
+            <div className="w-20 h-20 bg-yellow-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+              <WarningIcon className="text-yellow-400 text-3xl" />
+            </div>
+            <h3 className="text-2xl font-semibold text-white mb-2">
+              Detection Host Disconnected
+            </h3>
+            <p className="text-gray-400 mb-6">
+              {error}
+            </p>
+            <button
+              onClick={fetchHistoryClips}
+              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors"
+            >
+              Retry Connection
+            </button>
           </motion.div>
         ) : historyClips.length === 0 ? (
           <motion.div

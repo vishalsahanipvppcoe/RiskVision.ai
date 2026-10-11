@@ -25,9 +25,10 @@ import uuid
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 app = Flask(__name__, static_folder="static")
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
 # CORS setup with origin whitelist
-cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
+cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000,https://risk-vision-ai-rho.vercel.app")
 cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
 CORS(app, origins=cors_origins, supports_credentials=True)
 
@@ -63,6 +64,8 @@ ALERT_LOG_FILE = os.getenv("ALERT_LOG_FILE", os.path.join(BACKEND_DIR, "alert_lo
 # --- Thread-safe Locks and Buffers ---
 frame_lock = Lock()
 video_stream_lock = Lock()
+users_lock = Lock()
+alert_log_lock = Lock()
 
 # --- Configuration ---
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
@@ -146,15 +149,24 @@ if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
 
 # --- User Management Functions ---
 def load_users():
-    try:
-        with open(USERS_FILE, 'r') as f:
-            return json.load(f)
-    except:
+    with users_lock:
+        try:
+            if os.path.exists(USERS_FILE):
+                with open(USERS_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading users: {e}")
         return {}
 
 def save_users(users):
-    with open(USERS_FILE, 'w') as f:
-        json.dump(users, f)
+    with users_lock:
+        try:
+            temp_file = f"{USERS_FILE}.tmp"
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(users, f, indent=2)
+            os.replace(temp_file, USERS_FILE)
+        except Exception as e:
+            print(f"Error saving users: {e}")
 
 def hash_password(password):
     return generate_password_hash(password)
@@ -279,8 +291,9 @@ def send_alert(confidence):
 
     # Log alert locally
     try:
-        with open(ALERT_LOG_FILE, "a") as log_file:
-            log_file.write(json.dumps(alert_data) + "\n")
+        with alert_log_lock:
+            with open(ALERT_LOG_FILE, "a", encoding="utf-8") as log_file:
+                log_file.write(json.dumps(alert_data) + "\n")
     except Exception as e:
         print(f"Error logging alert: {e}")
 
@@ -312,80 +325,66 @@ def send_alert(confidence):
 
 
 def save_clip(directory, filename, frames):
-    """Saves a list of frames to a video file using ffmpeg."""
+    """Saves a list of frames to a video file using ffmpeg with an OpenCV fallback."""
     if not frames:
         print("Clip save failed: No frames in the buffer.")
         return
 
-
     filepath = os.path.join(directory, filename)
     print(f"Saving clip to: {filepath} ({len(frames)} frames)")
 
-
-    # Create temp dir for frames
-    temp_dir = os.path.join(directory, f'temp_frames_{os.path.splitext(filename)[0]}')
-    os.makedirs(temp_dir, exist_ok=True)
-
-
-    # Save frames as png
-    for i, frame in enumerate(frames):
-        frame_path = os.path.join(temp_dir, f'frame_{i:04d}.png')
-        cv2.imwrite(frame_path, frame)
-
-
-    # Use ffmpeg to create mp4
-    ffmpeg_cmd = [
-        FFMPEG_PATH,
-        '-y',  # overwrite
-        '-framerate', str(FPS),
-        '-i', os.path.join(temp_dir, 'frame_%04d.png'),
-        '-c:v', 'libx264',
-        '-pix_fmt', 'yuv420p',
-        filepath
-    ]
-
-
+    # 1. Immediately extract and save thumbnail in-memory (no external subprocess required)
+    thumbnail_filename = f"{os.path.splitext(filename)[0]}_thumb.jpg"
+    thumbnail_path = os.path.join(directory, thumbnail_filename)
     try:
-        subprocess.run(ffmpeg_cmd, check=True)
-        print(f"Clip successfully saved: {filename}")
+        thumb_idx = min(len(frames) - 1, int(FPS * 0.1)) if "FPS" in locals() and FPS else 0
+        cv2.imwrite(thumbnail_path, frames[thumb_idx])
+        print(f"Thumbnail saved: {thumbnail_filename}")
+    except Exception as thumb_err:
+        print(f"Warning: Failed to save thumbnail: {thumb_err}")
 
+    # 2. Encode video clip (try ffmpeg first for best browser H.264 compatibility, fall back to OpenCV VideoWriter)
+    ffmpeg_binary = shutil.which(FFMPEG_PATH) or (FFMPEG_PATH if os.path.exists(FFMPEG_PATH) else None)
+    encoded_successfully = False
 
-        # Generate thumbnail from the first frame
-        thumbnail_filename = f"{os.path.splitext(filename)[0]}_thumb.jpg"
-        thumbnail_path = os.path.join(directory, thumbnail_filename)
-
-
-        thumbnail_cmd = [
-            FFMPEG_PATH,
-            '-y',  # overwrite
-            '-i', filepath,
-            '-ss', '00:00:00.100',  # Take frame at 0.1 seconds (earlier for short clips)
-            '-vframes', '1',  # Extract 1 frame
-            '-q:v', '2',  # High quality
-            thumbnail_path
-        ]
-
-
+    if ffmpeg_binary:
+        temp_dir = os.path.join(directory, f'temp_frames_{os.path.splitext(filename)[0]}')
+        os.makedirs(temp_dir, exist_ok=True)
         try:
-            subprocess.run(thumbnail_cmd, check=True)
-            print(f"Thumbnail generated: {thumbnail_filename}")
-        except subprocess.CalledProcessError as e:
-            print(f"Failed to generate thumbnail: {e}")
+            for i, frame in enumerate(frames):
+                frame_path = os.path.join(temp_dir, f'frame_{i:04d}.png')
+                cv2.imwrite(frame_path, frame)
 
+            ffmpeg_cmd = [
+                ffmpeg_binary,
+                '-y',
+                '-framerate', str(int(FPS) if "FPS" in locals() and FPS else 30),
+                '-i', os.path.join(temp_dir, 'frame_%04d.png'),
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p',
+                filepath
+            ]
+            subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"Clip successfully saved via FFmpeg: {filename}")
+            encoded_successfully = True
+        except Exception as ffmpeg_err:
+            print(f"FFmpeg encoding issue: {ffmpeg_err}. Falling back to OpenCV VideoWriter.")
+        finally:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to create video with ffmpeg: {e}")
-        # Clean up temp frames on failure
-        for f in os.listdir(temp_dir):
-            os.remove(os.path.join(temp_dir, f))
-        os.rmdir(temp_dir)
-        return
-
-
-    # Clean up temp frames
-    for f in os.listdir(temp_dir):
-        os.remove(os.path.join(temp_dir, f))
-    os.rmdir(temp_dir)
+    if not encoded_successfully:
+        try:
+            h, w = frames[0].shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer = cv2.VideoWriter(filepath, fourcc, float(FPS if "FPS" in locals() and FPS else 30), (w, h))
+            for f in frames:
+                writer.write(f)
+            writer.release()
+            print(f"Clip successfully saved via OpenCV VideoWriter: {filename}")
+            encoded_successfully = True
+        except Exception as cv_err:
+            print(f"OpenCV clip encoding failed: {cv_err}")
 
 
     # Update history in Firebase
@@ -440,10 +439,14 @@ def detect_and_stream():
                 x1, x2 = int(x1 * w_ratio), int(x2 * w_ratio)
                 y1, y2 = int(y1 * h_ratio), int(y2 * h_ratio)
 
-                if class_id == 1:
+                # Dynamic class lookup from YOLO model names (ensures 0 vs 1 alignment)
+                cls_name = model.names.get(class_id, "").lower() if (model and hasattr(model, 'names')) else ""
+                is_violence = ("violence" in cls_name and "non" not in cls_name) or class_id == 0
+
+                if is_violence:
                     label = "Violence"
                     color = (0, 0, 255) # Red
-                    if confidence > 0.40:
+                    if confidence >= 0.40:
                         send_alert(confidence)
                 else:
                     label = "Non-violence"
@@ -463,14 +466,23 @@ def detect_and_stream():
 
 @app.route('/auth/register', methods=['POST'])
 def register():
-    data = request.get_json()
-    email = data.get('email')
-    password = data.get('password')
-    first_name = data.get('firstName', '')
-    last_name = data.get('lastName', '')
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'error': 'Invalid request: JSON body is required'}), 400
+
+    email = str(data.get('email', '')).strip().lower()
+    password = str(data.get('password', ''))
+    first_name = str(data.get('firstName', '')).strip()
+    last_name = str(data.get('lastName', '')).strip()
 
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
+
+    if '@' not in email or '.' not in email:
+        return jsonify({'error': 'Please provide a valid email address'}), 400
+
+    if len(password) < 6:
+        return jsonify({'error': 'Password must be at least 6 characters long'}), 400
 
     success, result = create_user(email, password, first_name, last_name)
     if success:
@@ -490,9 +502,12 @@ def register():
 
 @app.route('/auth/login', methods=['POST'])
 def login():
-    data = request.get_json()
-    email = data.get('email')
-    password = data.get('password')
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'error': 'Invalid request: JSON body is required'}), 400
+
+    email = str(data.get('email', '')).strip().lower()
+    password = str(data.get('password', ''))
 
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
@@ -511,7 +526,7 @@ def login():
             }
         }), 200
     else:
-        return jsonify({'error': 'Invalid credentials'}), 401
+        return jsonify({'error': 'Invalid email or password'}), 401
 
 @app.route('/auth/profile', methods=['GET'])
 @jwt_required()
@@ -630,6 +645,14 @@ def get_analytics():
         'total_clips_viewed': 0
     })
 
+    # Return unified response supporting both snake_case and camelCase consumers
+    login_trend_list = [{'date': d, 'logins': c} for d, c in sorted(login_trends.items())]
+    recent_logins_list = [
+        {
+            'timestamp': l.get('timestamp'),
+            'ipAddress': l.get('ip') or l.get('ipAddress', 'Unknown')
+        } for l in user_analytics.get('login_history', [])
+    ]
 
     return jsonify({
         'user_analytics': user_analytics,
@@ -637,6 +660,16 @@ def get_analytics():
             'total_users': total_users,
             'active_users': active_users,
             'login_trends': login_trends
+        },
+        'userSpecific': {
+            'loginCount': user_analytics.get('login_count', 0),
+            'lastLogin': user_analytics.get('last_login'),
+            'recentLogins': recent_logins_list
+        },
+        'global': {
+            'totalUsers': total_users,
+            'activeUsers': active_users,
+            'loginTrend': login_trend_list
         }
     }), 200
 
@@ -688,17 +721,38 @@ def list_clips():
 
 
 
-# **RE-ENABLED:** This route is necessary for the frontend to fetch the video files.
 @app.route('/history_clips/<path:filename>')
 def stream_video(filename):
     """Serves a specific video clip file."""
+    if not filename.endswith('.mp4'):
+        return jsonify({"error": "Invalid video file format"}), 400
     return send_from_directory(clip_save_dir, filename, mimetype='video/mp4')
 
 
 @app.route('/thumbnails/<path:filename>')
 def serve_thumbnail(filename):
     """Serves a specific thumbnail image."""
+    if not (filename.endswith('.jpg') or filename.endswith('.jpeg') or filename.endswith('.png')):
+        return jsonify({"error": "Invalid thumbnail file format"}), 400
     return send_from_directory(clip_save_dir, filename, mimetype='image/jpeg')
+
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint for host connectivity, camera status, and inference readiness."""
+    camera_online = False
+    with video_stream_lock:
+        if video_stream is not None:
+            camera_online = video_stream.isOpened()
+
+    return jsonify({
+        "status": "online",
+        "service": "RiskVision.ai Backend",
+        "timestamp": datetime.datetime.now().isoformat(),
+        "camera_active": camera_online,
+        "model_loaded": model is not None,
+        "firebase_connected": firebase_initialized
+    }), 200
 
 
 

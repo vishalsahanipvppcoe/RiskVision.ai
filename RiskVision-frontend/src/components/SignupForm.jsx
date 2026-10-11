@@ -3,6 +3,7 @@ import { FaEyeSlash, FaRegEye } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from '../context/AuthContext';
 import { motion } from "framer-motion";
+import { toast } from "react-hot-toast";
 
 const SignupForm = () => {
   const navigate = useNavigate();
@@ -29,7 +30,7 @@ const SignupForm = () => {
   async function submitHandler(event) {
     event.preventDefault();
     if (formData.password !== formData.confirmPassword) {
-      alert("Passwords do not match");
+      toast.error("Passwords do not match");
       return;
     }
 

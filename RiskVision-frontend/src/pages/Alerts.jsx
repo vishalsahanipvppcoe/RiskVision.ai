@@ -15,6 +15,7 @@ import { API_ENDPOINTS } from "../config/api";
 const Alerts = () => {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [videoErrors, setVideoErrors] = useState(new Set());
 
   const fetchAlerts = async () => {
@@ -28,8 +29,10 @@ const Alerts = () => {
         (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
       );
       setAlerts(sortedAlerts);
+      setError(null);
     } catch (err) {
       console.error("Error fetching alerts:", err);
+      setError("Unable to connect to RiskVision detection host. Ensure the backend server is active and connected.");
     } finally {
       setLoading(false);
     }
@@ -78,6 +81,28 @@ const Alerts = () => {
           >
             <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
             <p className="text-gray-400 text-lg">Loading security alerts...</p>
+          </motion.div>
+        ) : error ? (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="text-center py-20 bg-gray-800/40 rounded-2xl border border-yellow-500/30 max-w-xl mx-auto p-8"
+          >
+            <div className="w-20 h-20 bg-yellow-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+              <FaExclamationTriangle className="text-yellow-400 text-3xl" />
+            </div>
+            <h3 className="text-2xl font-semibold text-white mb-2">
+              Detection Host Disconnected
+            </h3>
+            <p className="text-gray-400 mb-6">
+              {error}
+            </p>
+            <button
+              onClick={fetchAlerts}
+              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors"
+            >
+              Retry Connection
+            </button>
           </motion.div>
         ) : alerts.length === 0 ? (
           <motion.div

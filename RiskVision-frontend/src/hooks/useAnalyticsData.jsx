@@ -29,7 +29,34 @@ export const useAnalyticsData = () => {
         }
 
         const result = await response.json();
-        setData(result);
+        const rawUser = result.userSpecific || result.user_analytics || {};
+        const rawGlobal = result.global || result.global_analytics || {};
+
+        const userSpecific = {
+          loginCount: rawUser.loginCount ?? rawUser.login_count ?? 0,
+          lastLogin: rawUser.lastLogin ?? rawUser.last_login ?? null,
+          recentLogins: (rawUser.recentLogins ?? rawUser.login_history ?? []).map(l => ({
+            timestamp: l.timestamp,
+            ipAddress: l.ipAddress || l.ip || 'Unknown'
+          }))
+        };
+
+        const loginTrendsRaw = rawGlobal.loginTrend ?? rawGlobal.login_trends ?? {};
+        const loginTrendArray = Array.isArray(loginTrendsRaw)
+          ? loginTrendsRaw
+          : Object.entries(loginTrendsRaw).map(([date, logins]) => ({ date, logins }));
+
+        const globalData = {
+          totalUsers: rawGlobal.totalUsers ?? rawGlobal.total_users ?? 0,
+          activeUsers: rawGlobal.activeUsers ?? rawGlobal.active_users ?? 0,
+          loginTrend: loginTrendArray
+        };
+
+        setData({
+          ...result,
+          userSpecific,
+          global: globalData
+        });
       } catch (e) {
         setError(e);
       } finally {

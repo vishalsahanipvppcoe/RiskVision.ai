@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import axios from 'axios';
 import { toast } from 'react-hot-toast';
-import { API_ENDPOINTS } from '../config/api';
+import { API_ENDPOINTS, getErrorMessage } from '../config/api';
 
 
 export const AuthContext = createContext(null);
@@ -55,7 +55,7 @@ export const AuthProvider = ({ children }) => {
       toast.success('Account created successfully!');
       return userData;
     } catch (error) {
-      const message = error.response?.data?.error || 'Registration failed';
+      const message = getErrorMessage(error, 'Registration failed');
       toast.error(message);
       throw error;
     }
@@ -74,7 +74,7 @@ export const AuthProvider = ({ children }) => {
       toast.success('Logged in successfully!');
       return userData;
     } catch (error) {
-      const message = error.response?.data?.error || 'Login failed';
+      const message = getErrorMessage(error, 'Login failed');
       toast.error(message);
       throw error;
     }

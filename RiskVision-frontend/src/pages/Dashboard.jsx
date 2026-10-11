@@ -13,7 +13,7 @@ import {
   FaExclamationTriangle
 } from "react-icons/fa";
 import axios from "axios";
-import { API_ENDPOINTS } from "../config/api";
+import { API_ENDPOINTS, isBackendConfigured } from "../config/api";
 
 const videos = [
   {
@@ -26,6 +26,8 @@ const videos = [
 const Dashboard = () => {
   const [pausedStates, setPausedStates] = useState({});
   const [fullscreenStates, setFullscreenStates] = useState({});
+  const [streamErrors, setStreamErrors] = useState({});
+  const [hostOnline, setHostOnline] = useState(true);
   const [alerts, setAlerts] = useState([]);
   const [stats, setStats] = useState({
     totalAlerts: 0,
@@ -44,8 +46,10 @@ const Dashboard = () => {
       const response = await axios.get(API_ENDPOINTS.alerts);
       setAlerts(response.data.alerts.slice(0, 5)); // Show last 5 alerts
       setStats(prev => ({ ...prev, totalAlerts: response.data.alerts.length }));
+      setHostOnline(true);
     } catch (error) {
       console.error('Failed to fetch alerts:', error);
+      setHostOnline(false);
     }
   };
 
@@ -117,11 +121,30 @@ const Dashboard = () => {
             </h1>
             <p className="text-gray-400 text-sm mt-1">AI-Powered Surveillance System</p>
           </div>
-          <div className="flex items-center gap-2 text-green-400">
-            <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
-            <span className="text-sm font-medium">System Active</span>
-          </div>
+          {hostOnline && !streamErrors[1] ? (
+            <div className="flex items-center gap-2 text-green-400">
+              <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
+              <span className="text-sm font-medium">Detection Host Online</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-yellow-400">
+              <div className="w-3 h-3 bg-yellow-400 rounded-full"></div>
+              <span className="text-sm font-medium">Host Offline / Standby</span>
+            </div>
+          )}
         </div>
+
+        {!isBackendConfigured && (
+          <div className="mb-8 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center gap-3 text-yellow-300 text-sm">
+            <FaExclamationTriangle className="text-xl flex-shrink-0" />
+            <div>
+              <p className="font-semibold">Detection Host Connection Required</p>
+              <p className="text-gray-400 mt-0.5">
+                Webcam capture and YOLO inference run on your local Windows PC. Set <code>VITE_API_URL</code> on Vercel to your host's secure URL to connect this dashboard.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -169,13 +192,35 @@ const Dashboard = () => {
                     className="bg-gray-800 p-6 rounded-xl shadow-xl border border-gray-700"
                   >
                     <div className="relative">
-                      <img
-                        ref={(el) => (videoRefs.current[video.id] = el)}
-                        src={video.src}
-                        alt="Live Stream"
-                        className="w-full h-64 object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-                        onClick={() => toggleFullscreen(video.id)}
-                      />
+                      {streamErrors[video.id] ? (
+                        <div className="w-full h-64 bg-gray-900/90 border border-yellow-500/30 rounded-lg flex flex-col items-center justify-center p-6 text-center">
+                          <FaExclamationTriangle className="text-yellow-400 text-3xl mb-3" />
+                          <h4 className="text-lg font-semibold text-white mb-1">Live Feed Unavailable</h4>
+                          <p className="text-sm text-gray-400 max-w-sm mb-4">
+                            The local surveillance host is offline or disconnected. Ensure the RiskVision backend is running on your PC.
+                          </p>
+                          <button
+                            onClick={() => {
+                              setStreamErrors(prev => ({ ...prev, [video.id]: false }));
+                              if (videoRefs.current[video.id]) {
+                                videoRefs.current[video.id].src = `${video.src}?t=${Date.now()}`;
+                              }
+                            }}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors"
+                          >
+                            Retry Connection
+                          </button>
+                        </div>
+                      ) : (
+                        <img
+                          ref={(el) => (videoRefs.current[video.id] = el)}
+                          src={video.src}
+                          alt="Live Stream"
+                          onError={() => setStreamErrors(prev => ({ ...prev, [video.id]: true }))}
+                          className="w-full h-64 object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+                          onClick={() => toggleFullscreen(video.id)}
+                        />
+                      )}
                       <div className="absolute top-4 right-4 flex gap-2">
                         <button
                           className="bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition-colors"
@@ -200,10 +245,17 @@ const Dashboard = () => {
 
                     <div className="mt-4">
                       <h3 className="text-lg font-semibold text-gray-200">{video.title}</h3>
-                      <div className="flex items-center gap-2 mt-2">
-                        <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                        <span className="text-sm text-gray-400">Live</span>
-                      </div>
+                      {streamErrors[video.id] ? (
+                        <div className="flex items-center gap-2 mt-2">
+                          <div className="w-2 h-2 bg-yellow-400 rounded-full"></div>
+                          <span className="text-sm text-yellow-400">Host Offline</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 mt-2">
+                          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                          <span className="text-sm text-gray-400">Live</span>
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 ))}
